@@ -1,11 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (C) 2013 Imagination Technologies
- * Author: Paul Burton <paul.burton@imgtec.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
+ * Author: Paul Burton <paul.burton@mips.com>
  */
 
 #ifndef __MIPS_ASM_MIPS_CPS_H__
@@ -142,8 +138,8 @@ GCR_ACCESSOR_RO(64, 0x000, config)
 GCR_ACCESSOR_RW(64, 0x008, base)
 #define CM_GCR_BASE_GCRBASE			GENMASK_ULL(47, 15)
 #define CM_GCR_BASE_CMDEFTGT			GENMASK(1, 0)
-#define  CM_GCR_BASE_CMDEFTGT_DISABLED		0
-#define  CM_GCR_BASE_CMDEFTGT_MEM		1
+#define  CM_GCR_BASE_CMDEFTGT_MEM		0
+#define  CM_GCR_BASE_CMDEFTGT_RESERVED		1
 #define  CM_GCR_BASE_CMDEFTGT_IOCU0		2
 #define  CM_GCR_BASE_CMDEFTGT_IOCU1		3
 

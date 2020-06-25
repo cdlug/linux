@@ -96,7 +96,7 @@ struct xpnet_pending_msg {
 	atomic_t use_count;
 };
 
-struct net_device *xpnet_device;
+static struct net_device *xpnet_device;
 
 /*
  * When we are notified of other partitions activating, we add them to
@@ -131,16 +131,16 @@ static DEFINE_SPINLOCK(xpnet_broadcast_lock);
 
 /* Define the XPNET debug device structures to be used with dev_dbg() et al */
 
-struct device_driver xpnet_dbg_name = {
+static struct device_driver xpnet_dbg_name = {
 	.name = "xpnet"
 };
 
-struct device xpnet_dbg_subname = {
+static struct device xpnet_dbg_subname = {
 	.init_name = "",	/* set to "" */
 	.driver = &xpnet_dbg_name
 };
 
-struct device *xpnet = &xpnet_dbg_subname;
+static struct device *xpnet = &xpnet_dbg_subname;
 
 /*
  * Packet was recevied by XPC and forwarded to us.
@@ -407,7 +407,7 @@ xpnet_send(struct sk_buff *skb, struct xpnet_pending_msg *queued_msg,
  * destination partid.  If the destination partid octets are 0xffff,
  * this packet is to be broadcast to all connected partitions.
  */
-static int
+static netdev_tx_t
 xpnet_dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct xpnet_pending_msg *queued_msg;
@@ -496,7 +496,7 @@ xpnet_dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
  * Deal with transmit timeouts coming from the network layer.
  */
 static void
-xpnet_dev_tx_timeout(struct net_device *dev)
+xpnet_dev_tx_timeout(struct net_device *dev, unsigned int txqueue)
 {
 	dev->stats.tx_errors++;
 }
@@ -515,13 +515,14 @@ xpnet_init(void)
 {
 	int result;
 
-	if (!is_shub() && !is_uv())
+	if (!is_uv())
 		return -ENODEV;
 
 	dev_info(xpnet, "registering network device %s\n", XPNET_DEVICE_NAME);
 
-	xpnet_broadcast_partitions = kzalloc(BITS_TO_LONGS(xp_max_npartitions) *
-					     sizeof(long), GFP_KERNEL);
+	xpnet_broadcast_partitions = kcalloc(BITS_TO_LONGS(xp_max_npartitions),
+					     sizeof(long),
+					     GFP_KERNEL);
 	if (xpnet_broadcast_partitions == NULL)
 		return -ENOMEM;
 

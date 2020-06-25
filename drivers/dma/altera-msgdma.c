@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * DMA driver for Altera mSGDMA IP core
  *
@@ -5,11 +6,6 @@
  *
  * Based on drivers/dma/xilinx/zynqmp_dma.c, which is:
  * Copyright (C) 2016 Xilinx, Inc. All rights reserved.
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/bitops.h>
@@ -212,11 +208,12 @@ struct msgdma_device {
 static struct msgdma_sw_desc *msgdma_get_descriptor(struct msgdma_device *mdev)
 {
 	struct msgdma_sw_desc *desc;
+	unsigned long flags;
 
-	spin_lock_bh(&mdev->lock);
+	spin_lock_irqsave(&mdev->lock, flags);
 	desc = list_first_entry(&mdev->free_list, struct msgdma_sw_desc, node);
 	list_del(&desc->node);
-	spin_unlock_bh(&mdev->lock);
+	spin_unlock_irqrestore(&mdev->lock, flags);
 
 	INIT_LIST_HEAD(&desc->tx_list);
 
@@ -306,13 +303,14 @@ static dma_cookie_t msgdma_tx_submit(struct dma_async_tx_descriptor *tx)
 	struct msgdma_device *mdev = to_mdev(tx->chan);
 	struct msgdma_sw_desc *new;
 	dma_cookie_t cookie;
+	unsigned long flags;
 
 	new = tx_to_desc(tx);
-	spin_lock_bh(&mdev->lock);
+	spin_lock_irqsave(&mdev->lock, flags);
 	cookie = dma_cookie_assign(tx);
 
 	list_add_tail(&new->node, &mdev->pending_list);
-	spin_unlock_bh(&mdev->lock);
+	spin_unlock_irqrestore(&mdev->lock, flags);
 
 	return cookie;
 }
@@ -336,17 +334,18 @@ msgdma_prep_memcpy(struct dma_chan *dchan, dma_addr_t dma_dst,
 	struct msgdma_extended_desc *desc;
 	size_t copy;
 	u32 desc_cnt;
+	unsigned long irqflags;
 
 	desc_cnt = DIV_ROUND_UP(len, MSGDMA_MAX_TRANS_LEN);
 
-	spin_lock_bh(&mdev->lock);
+	spin_lock_irqsave(&mdev->lock, irqflags);
 	if (desc_cnt > mdev->desc_free_cnt) {
-		spin_unlock_bh(&mdev->lock);
+		spin_unlock_irqrestore(&mdev->lock, irqflags);
 		dev_dbg(mdev->dev, "mdev %p descs are not available\n", mdev);
 		return NULL;
 	}
 	mdev->desc_free_cnt -= desc_cnt;
-	spin_unlock_bh(&mdev->lock);
+	spin_unlock_irqrestore(&mdev->lock, irqflags);
 
 	do {
 		/* Allocate and populate the descriptor */
@@ -397,18 +396,19 @@ msgdma_prep_slave_sg(struct dma_chan *dchan, struct scatterlist *sgl,
 	u32 desc_cnt = 0, i;
 	struct scatterlist *sg;
 	u32 stride;
+	unsigned long irqflags;
 
 	for_each_sg(sgl, sg, sg_len, i)
 		desc_cnt += DIV_ROUND_UP(sg_dma_len(sg), MSGDMA_MAX_TRANS_LEN);
 
-	spin_lock_bh(&mdev->lock);
+	spin_lock_irqsave(&mdev->lock, irqflags);
 	if (desc_cnt > mdev->desc_free_cnt) {
-		spin_unlock_bh(&mdev->lock);
+		spin_unlock_irqrestore(&mdev->lock, irqflags);
 		dev_dbg(mdev->dev, "mdev %p descs are not available\n", mdev);
 		return NULL;
 	}
 	mdev->desc_free_cnt -= desc_cnt;
-	spin_unlock_bh(&mdev->lock);
+	spin_unlock_irqrestore(&mdev->lock, irqflags);
 
 	avail = sg_dma_len(sgl);
 
@@ -566,10 +566,11 @@ static void msgdma_start_transfer(struct msgdma_device *mdev)
 static void msgdma_issue_pending(struct dma_chan *chan)
 {
 	struct msgdma_device *mdev = to_mdev(chan);
+	unsigned long flags;
 
-	spin_lock_bh(&mdev->lock);
+	spin_lock_irqsave(&mdev->lock, flags);
 	msgdma_start_transfer(mdev);
-	spin_unlock_bh(&mdev->lock);
+	spin_unlock_irqrestore(&mdev->lock, flags);
 }
 
 /**
@@ -634,10 +635,11 @@ static void msgdma_free_descriptors(struct msgdma_device *mdev)
 static void msgdma_free_chan_resources(struct dma_chan *dchan)
 {
 	struct msgdma_device *mdev = to_mdev(dchan);
+	unsigned long flags;
 
-	spin_lock_bh(&mdev->lock);
+	spin_lock_irqsave(&mdev->lock, flags);
 	msgdma_free_descriptors(mdev);
-	spin_unlock_bh(&mdev->lock);
+	spin_unlock_irqrestore(&mdev->lock, flags);
 	kfree(mdev->sw_desq);
 }
 
@@ -682,8 +684,9 @@ static void msgdma_tasklet(unsigned long data)
 	u32 count;
 	u32 __maybe_unused size;
 	u32 __maybe_unused status;
+	unsigned long flags;
 
-	spin_lock(&mdev->lock);
+	spin_lock_irqsave(&mdev->lock, flags);
 
 	/* Read number of responses that are available */
 	count = ioread32(mdev->csr + MSGDMA_CSR_RESP_FILL_LEVEL);
@@ -698,13 +701,13 @@ static void msgdma_tasklet(unsigned long data)
 		 * bits. So we need to just drop these values.
 		 */
 		size = ioread32(mdev->resp + MSGDMA_RESP_BYTES_TRANSFERRED);
-		status = ioread32(mdev->resp - MSGDMA_RESP_STATUS);
+		status = ioread32(mdev->resp + MSGDMA_RESP_STATUS);
 
 		msgdma_complete_descriptor(mdev);
 		msgdma_chan_desc_cleanup(mdev);
 	}
 
-	spin_unlock(&mdev->lock);
+	spin_unlock_irqrestore(&mdev->lock, flags);
 }
 
 /**
@@ -769,10 +772,10 @@ static int request_and_map(struct platform_device *pdev, const char *name,
 		return -EBUSY;
 	}
 
-	*ptr = devm_ioremap_nocache(device, region->start,
+	*ptr = devm_ioremap(device, region->start,
 				    resource_size(region));
 	if (*ptr == NULL) {
-		dev_err(device, "ioremap_nocache of %s failed!", name);
+		dev_err(device, "ioremap of %s failed!", name);
 		return -ENOMEM;
 	}
 

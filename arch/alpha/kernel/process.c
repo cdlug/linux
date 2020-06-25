@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/alpha/kernel/process.c
  *
@@ -36,7 +37,6 @@
 #include <asm/reg.h>
 #include <linux/uaccess.h>
 #include <asm/io.h>
-#include <asm/pgtable.h>
 #include <asm/hwrpb.h>
 #include <asm/fpu.h>
 
@@ -268,12 +268,13 @@ copy_thread(unsigned long clone_flags, unsigned long usp,
 	   application calling fork.  */
 	if (clone_flags & CLONE_SETTLS)
 		childti->pcb.unique = regs->r20;
+	else
+		regs->r20 = 0;	/* OSF/1 has some strange fork() semantics.  */
 	childti->pcb.usp = usp ?: rdusp();
 	*childregs = *regs;
 	childregs->r0 = 0;
 	childregs->r19 = 0;
 	childregs->r20 = 1;	/* OSF/1 has some strange fork() semantics.  */
-	regs->r20 = 0;
 	stack = ((struct switch_stack *) regs) - 1;
 	*childstack = *stack;
 	childstack->r26 = (unsigned long) ret_from_fork;
@@ -360,7 +361,7 @@ EXPORT_SYMBOL(dump_elf_task_fp);
  * all.  -- r~
  */
 
-unsigned long
+static unsigned long
 thread_saved_pc(struct task_struct *t)
 {
 	unsigned long base = (unsigned long)task_stack_page(t);

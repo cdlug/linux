@@ -1,12 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_ARM_XEN_PAGE_H
 #define _ASM_ARM_XEN_PAGE_H
 
 #include <asm/page.h>
-#include <asm/pgtable.h>
 
 #include <linux/pfn.h>
 #include <linux/types.h>
 #include <linux/dma-mapping.h>
+#include <linux/pgtable.h>
 
 #include <xen/xen.h>
 #include <xen/interface/grant_table.h>

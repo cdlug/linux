@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/etherdevice.h>
 #include "ipvlan.h"
 #include <linux/if_vlan.h>
@@ -197,8 +198,8 @@ static int ipvtap_init(void)
 {
 	int err;
 
-	err = tap_create_cdev(&ipvtap_cdev, &ipvtap_major, "ipvtap");
-
+	err = tap_create_cdev(&ipvtap_cdev, &ipvtap_major, "ipvtap",
+			      THIS_MODULE);
 	if (err)
 		goto out1;
 

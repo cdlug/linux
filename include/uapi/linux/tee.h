@@ -50,11 +50,13 @@
 
 #define TEE_GEN_CAP_GP		(1 << 0)/* GlobalPlatform compliant TEE */
 #define TEE_GEN_CAP_PRIVILEGED	(1 << 1)/* Privileged device (for supplicant) */
+#define TEE_GEN_CAP_REG_MEM	(1 << 2)/* Supports registering shared memory */
 
 /*
  * TEE Implementation ID
  */
 #define TEE_IMPL_ID_OPTEE	1
+#define TEE_IMPL_ID_AMDTEE	2
 
 /*
  * OP-TEE specific capabilities
@@ -154,6 +156,13 @@ struct tee_ioctl_buf_data {
  */
 #define TEE_IOCTL_PARAM_ATTR_TYPE_MASK		0xff
 
+/* Meta parameter carrying extra information about the message. */
+#define TEE_IOCTL_PARAM_ATTR_META		0x100
+
+/* Mask of all known attr bits */
+#define TEE_IOCTL_PARAM_ATTR_MASK \
+	(TEE_IOCTL_PARAM_ATTR_TYPE_MASK | TEE_IOCTL_PARAM_ATTR_META)
+
 /*
  * Matches TEEC_LOGIN_* in GP TEE Client API
  * Are only defined for GP compliant TEEs
@@ -164,6 +173,15 @@ struct tee_ioctl_buf_data {
 #define TEE_IOCTL_LOGIN_APPLICATION		4
 #define TEE_IOCTL_LOGIN_USER_APPLICATION	5
 #define TEE_IOCTL_LOGIN_GROUP_APPLICATION	6
+/*
+ * Disallow user-space to use GP implementation specific login
+ * method range (0x80000000 - 0xBFFFFFFF). This range is rather
+ * being reserved for REE kernel clients or TEE implementation.
+ */
+#define TEE_IOCTL_LOGIN_REE_KERNEL_MIN		0x80000000
+#define TEE_IOCTL_LOGIN_REE_KERNEL_MAX		0xBFFFFFFF
+/* Private login method for REE kernel clients */
+#define TEE_IOCTL_LOGIN_REE_KERNEL		0x80000000
 
 /**
  * struct tee_ioctl_param - parameter
@@ -332,6 +350,35 @@ struct tee_iocl_supp_send_arg {
 #define TEE_IOC_SUPPL_SEND	_IOR(TEE_IOC_MAGIC, TEE_IOC_BASE + 7, \
 				     struct tee_ioctl_buf_data)
 
+/**
+ * struct tee_ioctl_shm_register_data - Shared memory register argument
+ * @addr:      [in] Start address of shared memory to register
+ * @length:    [in/out] Length of shared memory to register
+ * @flags:     [in/out] Flags to/from registration.
+ * @id:                [out] Identifier of the shared memory
+ *
+ * The flags field should currently be zero as input. Updated by the call
+ * with actual flags as defined by TEE_IOCTL_SHM_* above.
+ * This structure is used as argument for TEE_IOC_SHM_REGISTER below.
+ */
+struct tee_ioctl_shm_register_data {
+	__u64 addr;
+	__u64 length;
+	__u32 flags;
+	__s32 id;
+};
+
+/**
+ * TEE_IOC_SHM_REGISTER - Register shared memory argument
+ *
+ * Registers shared memory between the user space process and secure OS.
+ *
+ * Returns a file descriptor on success or < 0 on failure
+ *
+ * The shared memory is unregisterred when the descriptor is closed.
+ */
+#define TEE_IOC_SHM_REGISTER   _IOWR(TEE_IOC_MAGIC, TEE_IOC_BASE + 9, \
+				     struct tee_ioctl_shm_register_data)
 /*
  * Five syscalls are used when communicating with the TEE driver.
  * open(): opens the device associated with the driver

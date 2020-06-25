@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <dirent.h>
 #include <stdlib.h>
 #include <linux/kernel.h>
@@ -8,7 +9,7 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <api/fs/fs.h>
-#include "util.h"
+#include "dso.h"
 #include "machine.h"
 #include "symbol.h"
 #include "tests.h"
@@ -303,7 +304,7 @@ int test__dso_data_cache(struct test *test __maybe_unused, int subtest __maybe_u
 	/* Make sure we did not leak any file descriptor. */
 	nr_end = open_files_cnt();
 	pr_debug("nr start %ld, nr stop %ld\n", nr, nr_end);
-	TEST_ASSERT_VAL("failed leadking files", nr == nr_end);
+	TEST_ASSERT_VAL("failed leaking files", nr == nr_end);
 	return 0;
 }
 
@@ -379,6 +380,6 @@ int test__dso_data_reopen(struct test *test __maybe_unused, int subtest __maybe_
 	/* Make sure we did not leak any file descriptor. */
 	nr_end = open_files_cnt();
 	pr_debug("nr start %ld, nr stop %ld\n", nr, nr_end);
-	TEST_ASSERT_VAL("failed leadking files", nr == nr_end);
+	TEST_ASSERT_VAL("failed leaking files", nr == nr_end);
 	return 0;
 }

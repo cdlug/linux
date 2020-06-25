@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright IBM Corp. 2004, 2010
  * Interface implementation for communication with the z/VM control program
@@ -22,7 +23,6 @@
 #include <linux/mutex.h>
 #include <linux/cma.h>
 #include <linux/mm.h>
-#include <asm/compat.h>
 #include <asm/cpcmd.h>
 #include <asm/debug.h>
 #include <asm/vmcp.h>
@@ -43,6 +43,8 @@ static struct cma *vmcp_cma;
 
 static int __init early_parse_vmcp_cma(char *p)
 {
+	if (!p)
+		return 1;
 	vmcp_cma_size = ALIGN(memparse(p, NULL), PAGE_SIZE);
 	return 0;
 }
@@ -68,7 +70,7 @@ static void vmcp_response_alloc(struct vmcp_session *session)
 	 * anymore the system won't work anyway.
 	 */
 	if (order > 2)
-		page = cma_alloc(vmcp_cma, nr_pages, 0, GFP_KERNEL);
+		page = cma_alloc(vmcp_cma, nr_pages, 0, false);
 	if (page) {
 		session->response = (char *)page_to_phys(page);
 		session->cma_alloc = 1;

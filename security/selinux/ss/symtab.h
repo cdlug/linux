@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * A symbol table (symtab) maintains associations between symbol
  * strings and datum values.  The type of the datum values
@@ -12,7 +13,7 @@
 #include "hashtab.h"
 
 struct symtab {
-	struct hashtab *table;	/* hash table (keyed on a string) */
+	struct hashtab table;	/* hash table (keyed on a string) */
 	u32 nprim;		/* number of primary names in table */
 };
 

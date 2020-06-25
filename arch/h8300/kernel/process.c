@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/h8300/kernel/process.c
  *
@@ -44,7 +45,6 @@
 #include <linux/uaccess.h>
 #include <asm/traps.h>
 #include <asm/setup.h>
-#include <asm/pgtable.h>
 
 void (*pm_power_off)(void) = NULL;
 EXPORT_SYMBOL(pm_power_off);

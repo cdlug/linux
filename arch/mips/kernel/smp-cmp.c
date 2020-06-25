@@ -1,16 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- *  This program is free software; you can distribute it and/or modify it
- *  under the terms of the GNU General Public License (Version 2) as
- *  published by the Free Software Foundation.
- *
- *  This program is distributed in the hope it will be useful, but WITHOUT
- *  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- *  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- *  for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place - Suite 330, Boston MA 02111-1307, USA.
  *
  * Copyright (C) 2007 MIPS Technologies, Inc.
  *    Chris Dearman (chris@mips.com)
@@ -19,7 +8,7 @@
 #undef DEBUG
 
 #include <linux/kernel.h>
-#include <linux/sched.h>
+#include <linux/sched/task_stack.h>
 #include <linux/smp.h>
 #include <linux/cpumask.h>
 #include <linux/interrupt.h>
@@ -50,8 +39,8 @@ static void cmp_init_secondary(void)
 
 #ifdef CONFIG_MIPS_MT_SMP
 	if (cpu_has_mipsmt)
-		c->vpe_id = (read_c0_tcbind() >> TCBIND_CURVPE_SHIFT) &
-			TCBIND_CURVPE;
+		cpu_set_vpe_id(c, (read_c0_tcbind() >> TCBIND_CURVPE_SHIFT) &
+				  TCBIND_CURVPE);
 #endif
 }
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM xen
 
@@ -65,14 +66,18 @@ TRACE_EVENT(xen_mc_callback,
 	    TP_PROTO(xen_mc_callback_fn_t fn, void *data),
 	    TP_ARGS(fn, data),
 	    TP_STRUCT__entry(
-		    __field(xen_mc_callback_fn_t, fn)
+		    /*
+		     * Use field_struct to avoid is_signed_type()
+		     * comparison of a function pointer.
+		     */
+		    __field_struct(xen_mc_callback_fn_t, fn)
 		    __field(void *, data)
 		    ),
 	    TP_fast_assign(
 		    __entry->fn = fn;
 		    __entry->data = data;
 		    ),
-	    TP_printk("callback %pf, data %p",
+	    TP_printk("callback %ps, data %p",
 		      __entry->fn, __entry->data)
 	);
 
@@ -147,7 +152,6 @@ DECLARE_EVENT_CLASS(xen_mmu__set_pte,
 		     TP_ARGS(ptep, pteval))
 
 DEFINE_XEN_MMU_SET_PTE(xen_mmu_set_pte);
-DEFINE_XEN_MMU_SET_PTE(xen_mmu_set_pte_atomic);
 
 TRACE_EVENT(xen_mmu_set_pte_at,
 	    TP_PROTO(struct mm_struct *mm, unsigned long addr,
@@ -169,21 +173,6 @@ TRACE_EVENT(xen_mmu_set_pte_at,
 		      (int)sizeof(pteval_t) * 2, (unsigned long long)__entry->pteval)
 	);
 
-TRACE_EVENT(xen_mmu_pte_clear,
-	    TP_PROTO(struct mm_struct *mm, unsigned long addr, pte_t *ptep),
-	    TP_ARGS(mm, addr, ptep),
-	    TP_STRUCT__entry(
-		    __field(struct mm_struct *, mm)
-		    __field(unsigned long, addr)
-		    __field(pte_t *, ptep)
-		    ),
-	    TP_fast_assign(__entry->mm = mm;
-			   __entry->addr = addr;
-			   __entry->ptep = ptep),
-	    TP_printk("mm %p addr %lx ptep %p",
-		      __entry->mm, __entry->addr, __entry->ptep)
-	);
-
 TRACE_DEFINE_SIZEOF(pmdval_t);
 
 TRACE_EVENT(xen_mmu_set_pmd,
@@ -201,6 +190,24 @@ TRACE_EVENT(xen_mmu_set_pmd,
 		      (int)sizeof(pmdval_t) * 2, (unsigned long long)__entry->pmdval)
 	);
 
+#ifdef CONFIG_X86_PAE
+DEFINE_XEN_MMU_SET_PTE(xen_mmu_set_pte_atomic);
+
+TRACE_EVENT(xen_mmu_pte_clear,
+	    TP_PROTO(struct mm_struct *mm, unsigned long addr, pte_t *ptep),
+	    TP_ARGS(mm, addr, ptep),
+	    TP_STRUCT__entry(
+		    __field(struct mm_struct *, mm)
+		    __field(unsigned long, addr)
+		    __field(pte_t *, ptep)
+		    ),
+	    TP_fast_assign(__entry->mm = mm;
+			   __entry->addr = addr;
+			   __entry->ptep = ptep),
+	    TP_printk("mm %p addr %lx ptep %p",
+		      __entry->mm, __entry->addr, __entry->ptep)
+	);
+
 TRACE_EVENT(xen_mmu_pmd_clear,
 	    TP_PROTO(pmd_t *pmdp),
 	    TP_ARGS(pmdp),
@@ -210,6 +217,7 @@ TRACE_EVENT(xen_mmu_pmd_clear,
 	    TP_fast_assign(__entry->pmdp = pmdp),
 	    TP_printk("pmdp %p", __entry->pmdp)
 	);
+#endif
 
 #if CONFIG_PGTABLE_LEVELS >= 4
 
@@ -348,23 +356,7 @@ DECLARE_EVENT_CLASS(xen_mmu_pgd,
 DEFINE_XEN_MMU_PGD_EVENT(xen_mmu_pgd_pin);
 DEFINE_XEN_MMU_PGD_EVENT(xen_mmu_pgd_unpin);
 
-TRACE_EVENT(xen_mmu_flush_tlb_all,
-	    TP_PROTO(int x),
-	    TP_ARGS(x),
-	    TP_STRUCT__entry(__array(char, x, 0)),
-	    TP_fast_assign((void)x),
-	    TP_printk("%s", "")
-	);
-
-TRACE_EVENT(xen_mmu_flush_tlb,
-	    TP_PROTO(int x),
-	    TP_ARGS(x),
-	    TP_STRUCT__entry(__array(char, x, 0)),
-	    TP_fast_assign((void)x),
-	    TP_printk("%s", "")
-	);
-
-TRACE_EVENT(xen_mmu_flush_tlb_single,
+TRACE_EVENT(xen_mmu_flush_tlb_one_user,
 	    TP_PROTO(unsigned long addr),
 	    TP_ARGS(addr),
 	    TP_STRUCT__entry(

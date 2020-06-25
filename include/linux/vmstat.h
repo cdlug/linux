@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_VMSTAT_H
 #define _LINUX_VMSTAT_H
 
@@ -6,8 +7,37 @@
 #include <linux/mmzone.h>
 #include <linux/vm_event_item.h>
 #include <linux/atomic.h>
+#include <linux/static_key.h>
 
 extern int sysctl_stat_interval;
+
+#ifdef CONFIG_NUMA
+#define ENABLE_NUMA_STAT   1
+#define DISABLE_NUMA_STAT   0
+extern int sysctl_vm_numa_stat;
+DECLARE_STATIC_KEY_TRUE(vm_numa_stat_key);
+int sysctl_vm_numa_stat_handler(struct ctl_table *table, int write,
+		void *buffer, size_t *length, loff_t *ppos);
+#endif
+
+struct reclaim_stat {
+	unsigned nr_dirty;
+	unsigned nr_unqueued_dirty;
+	unsigned nr_congested;
+	unsigned nr_writeback;
+	unsigned nr_immediate;
+	unsigned nr_pageout;
+	unsigned nr_activate[2];
+	unsigned nr_ref_keep;
+	unsigned nr_unmap_fail;
+	unsigned nr_lazyfree_fail;
+};
+
+enum writeback_stat_item {
+	NR_DIRTY_THRESHOLD,
+	NR_DIRTY_BG_THRESHOLD,
+	NR_VM_WRITEBACK_STAT_ITEMS,
+};
 
 #ifdef CONFIG_VM_EVENT_COUNTERS
 /*
@@ -205,23 +235,6 @@ static inline unsigned long zone_page_state_snapshot(struct zone *zone,
 	return x;
 }
 
-static inline unsigned long node_page_state_snapshot(pg_data_t *pgdat,
-					enum node_stat_item item)
-{
-	long x = atomic_long_read(&pgdat->vm_stat[item]);
-
-#ifdef CONFIG_SMP
-	int cpu;
-	for_each_online_cpu(cpu)
-		x += per_cpu_ptr(pgdat->per_cpu_nodestats, cpu)->vm_node_stat_diff[item];
-
-	if (x < 0)
-		x = 0;
-#endif
-	return x;
-}
-
-
 #ifdef CONFIG_NUMA
 extern void __inc_numa_state(struct zone *zone, enum numa_stat_item item);
 extern unsigned long sum_zone_node_page_state(int node,
@@ -233,11 +246,6 @@ extern unsigned long node_page_state(struct pglist_data *pgdat,
 #define sum_zone_node_page_state(node, item) global_zone_page_state(item)
 #define node_page_state(node, item) global_node_page_state(item)
 #endif /* CONFIG_NUMA */
-
-#define add_zone_page_state(__z, __i, __d) mod_zone_page_state(__z, __i, __d)
-#define sub_zone_page_state(__z, __i, __d) mod_zone_page_state(__z, __i, -(__d))
-#define add_node_page_state(__p, __i, __d) mod_node_page_state(__p, __i, __d)
-#define sub_node_page_state(__p, __i, __d) mod_node_page_state(__p, __i, -(__d))
 
 #ifdef CONFIG_SMP
 void __mod_zone_page_state(struct zone *, enum zone_stat_item item, long);
@@ -268,8 +276,8 @@ void cpu_vm_stats_fold(int cpu);
 void refresh_zone_stat_thresholds(void);
 
 struct ctl_table;
-int vmstat_refresh(struct ctl_table *, int write,
-		   void __user *buffer, size_t *lenp, loff_t *ppos);
+int vmstat_refresh(struct ctl_table *, int write, void *buffer, size_t *lenp,
+		loff_t *ppos);
 
 void drain_zonestat(struct zone *zone, struct per_cpu_pageset *);
 
@@ -380,5 +388,49 @@ static inline void __mod_zone_freepage_state(struct zone *zone, int nr_pages,
 }
 
 extern const char * const vmstat_text[];
+
+static inline const char *zone_stat_name(enum zone_stat_item item)
+{
+	return vmstat_text[item];
+}
+
+#ifdef CONFIG_NUMA
+static inline const char *numa_stat_name(enum numa_stat_item item)
+{
+	return vmstat_text[NR_VM_ZONE_STAT_ITEMS +
+			   item];
+}
+#endif /* CONFIG_NUMA */
+
+static inline const char *node_stat_name(enum node_stat_item item)
+{
+	return vmstat_text[NR_VM_ZONE_STAT_ITEMS +
+			   NR_VM_NUMA_STAT_ITEMS +
+			   item];
+}
+
+static inline const char *lru_list_name(enum lru_list lru)
+{
+	return node_stat_name(NR_LRU_BASE + lru) + 3; // skip "nr_"
+}
+
+static inline const char *writeback_stat_name(enum writeback_stat_item item)
+{
+	return vmstat_text[NR_VM_ZONE_STAT_ITEMS +
+			   NR_VM_NUMA_STAT_ITEMS +
+			   NR_VM_NODE_STAT_ITEMS +
+			   item];
+}
+
+#if defined(CONFIG_VM_EVENT_COUNTERS) || defined(CONFIG_MEMCG)
+static inline const char *vm_event_name(enum vm_event_item item)
+{
+	return vmstat_text[NR_VM_ZONE_STAT_ITEMS +
+			   NR_VM_NUMA_STAT_ITEMS +
+			   NR_VM_NODE_STAT_ITEMS +
+			   NR_VM_WRITEBACK_STAT_ITEMS +
+			   item];
+}
+#endif /* CONFIG_VM_EVENT_COUNTERS || CONFIG_MEMCG */
 
 #endif /* _LINUX_VMSTAT_H */

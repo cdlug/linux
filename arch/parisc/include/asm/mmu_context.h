@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __PARISC_MMU_CONTEXT_H
 #define __PARISC_MMU_CONTEXT_H
 
@@ -5,7 +6,6 @@
 #include <linux/sched.h>
 #include <linux/atomic.h>
 #include <asm/pgalloc.h>
-#include <asm/pgtable.h>
 #include <asm-generic/mm_hooks.h>
 
 static inline void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)

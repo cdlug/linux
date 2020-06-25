@@ -1,15 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * af_alg: User-space algorithm interface
  *
  * This file provides the user-space API for algorithms.
  *
  * Copyright (c) 2010 Herbert Xu <herbert@gondor.apana.org.au>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option)
- * any later version.
- *
  */
 
 #include <linux/atomic.h>
@@ -122,8 +117,10 @@ static void alg_do_release(const struct af_alg_type *type, void *private)
 
 int af_alg_release(struct socket *sock)
 {
-	if (sock->sk)
+	if (sock->sk) {
 		sock_put(sock->sk);
+		sock->sk = NULL;
+	}
 	return 0;
 }
 EXPORT_SYMBOL_GPL(af_alg_release);
@@ -137,11 +134,13 @@ void af_alg_release_parent(struct sock *sk)
 	sk = ask->parent;
 	ask = alg_sk(sk);
 
-	lock_sock(sk);
+	local_bh_disable();
+	bh_lock_sock(sk);
 	ask->nokey_refcnt -= nokey;
 	if (!last)
 		last = !--ask->refcnt;
-	release_sock(sk);
+	bh_unlock_sock(sk);
+	local_bh_enable();
 
 	if (last)
 		sock_put(sk);
@@ -150,7 +149,7 @@ EXPORT_SYMBOL_GPL(af_alg_release_parent);
 
 static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 {
-	const u32 forbidden = CRYPTO_ALG_INTERNAL;
+	const u32 allowed = CRYPTO_ALG_KERN_DRIVER_ONLY;
 	struct sock *sk = sock->sk;
 	struct alg_sock *ask = alg_sk(sk);
 	struct sockaddr_alg *sa = (void *)uaddr;
@@ -164,11 +163,15 @@ static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (addr_len < sizeof(*sa))
 		return -EINVAL;
 
+	/* If caller uses non-allowed flag, return error. */
+	if ((sa->salg_feat & ~allowed) || (sa->salg_mask & ~allowed))
+		return -EINVAL;
+
 	sa->salg_type[sizeof(sa->salg_type) - 1] = 0;
 	sa->salg_name[sizeof(sa->salg_name) + addr_len - sizeof(*sa) - 1] = 0;
 
 	type = alg_get_type(sa->salg_type);
-	if (IS_ERR(type) && PTR_ERR(type) == -ENOENT) {
+	if (PTR_ERR(type) == -ENOENT) {
 		request_module("algif-%s", sa->salg_type);
 		type = alg_get_type(sa->salg_type);
 	}
@@ -176,9 +179,7 @@ static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (IS_ERR(type))
 		return PTR_ERR(type);
 
-	private = type->bind(sa->salg_name,
-			     sa->salg_feat & ~forbidden,
-			     sa->salg_mask & ~forbidden);
+	private = type->bind(sa->salg_name, sa->salg_feat, sa->salg_mask);
 	if (IS_ERR(private)) {
 		module_put(type->owner);
 		return PTR_ERR(private);
@@ -300,8 +301,6 @@ int af_alg_accept(struct sock *sk, struct socket *newsock, bool kern)
 	if (err)
 		goto unlock;
 
-	sk2->sk_family = PF_ALG;
-
 	if (nokey || !ask->refcnt++)
 		sock_hold(sk);
 	ask->nokey_refcnt += nokey;
@@ -345,7 +344,6 @@ static const struct proto_ops alg_proto_ops = {
 	.sendpage	=	sock_no_sendpage,
 	.sendmsg	=	sock_no_sendmsg,
 	.recvmsg	=	sock_no_recvmsg,
-	.poll		=	sock_no_poll,
 
 	.bind		=	alg_bind,
 	.release	=	af_alg_release,
@@ -379,7 +377,6 @@ static int alg_create(struct net *net, struct socket *sock, int protocol,
 	sock->ops = &alg_proto_ops;
 	sock_init_data(sock, sk);
 
-	sk->sk_family = PF_ALG;
 	sk->sk_destruct = alg_sock_destruct;
 
 	return 0;
@@ -424,12 +421,12 @@ int af_alg_make_sg(struct af_alg_sgl *sgl, struct iov_iter *iter, int len)
 }
 EXPORT_SYMBOL_GPL(af_alg_make_sg);
 
-void af_alg_link_sg(struct af_alg_sgl *sgl_prev, struct af_alg_sgl *sgl_new)
+static void af_alg_link_sg(struct af_alg_sgl *sgl_prev,
+			   struct af_alg_sgl *sgl_new)
 {
 	sg_unmark_end(sgl_prev->sg + sgl_prev->npages - 1);
 	sg_chain(sgl_prev->sg, sgl_prev->npages + 1, sgl_new->sg);
 }
-EXPORT_SYMBOL_GPL(af_alg_link_sg);
 
 void af_alg_free_sg(struct af_alg_sgl *sgl)
 {
@@ -440,7 +437,7 @@ void af_alg_free_sg(struct af_alg_sgl *sgl)
 }
 EXPORT_SYMBOL_GPL(af_alg_free_sg);
 
-int af_alg_cmsg_send(struct msghdr *msg, struct af_alg_control *con)
+static int af_alg_cmsg_send(struct msghdr *msg, struct af_alg_control *con)
 {
 	struct cmsghdr *cmsg;
 
@@ -479,34 +476,6 @@ int af_alg_cmsg_send(struct msghdr *msg, struct af_alg_control *con)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(af_alg_cmsg_send);
-
-int af_alg_wait_for_completion(int err, struct af_alg_completion *completion)
-{
-	switch (err) {
-	case -EINPROGRESS:
-	case -EBUSY:
-		wait_for_completion(&completion->completion);
-		reinit_completion(&completion->completion);
-		err = completion->err;
-		break;
-	};
-
-	return err;
-}
-EXPORT_SYMBOL_GPL(af_alg_wait_for_completion);
-
-void af_alg_complete(struct crypto_async_request *req, int err)
-{
-	struct af_alg_completion *completion = req->data;
-
-	if (err == -EINPROGRESS)
-		return;
-
-	completion->err = err;
-	complete(&completion->completion);
-}
-EXPORT_SYMBOL_GPL(af_alg_complete);
 
 /**
  * af_alg_alloc_tsgl - allocate the TX SGL
@@ -514,7 +483,7 @@ EXPORT_SYMBOL_GPL(af_alg_complete);
  * @sk socket of connection to user space
  * @return: 0 upon success, < 0 upon error
  */
-int af_alg_alloc_tsgl(struct sock *sk)
+static int af_alg_alloc_tsgl(struct sock *sk)
 {
 	struct alg_sock *ask = alg_sk(sk);
 	struct af_alg_ctx *ctx = ask->private;
@@ -526,8 +495,8 @@ int af_alg_alloc_tsgl(struct sock *sk)
 		sg = sgl->sg;
 
 	if (!sg || sgl->cur >= MAX_SGL_ENTS) {
-		sgl = sock_kmalloc(sk, sizeof(*sgl) +
-				       sizeof(sgl->sg[0]) * (MAX_SGL_ENTS + 1),
+		sgl = sock_kmalloc(sk,
+				   struct_size(sgl, sg, (MAX_SGL_ENTS + 1)),
 				   GFP_KERNEL);
 		if (!sgl)
 			return -ENOMEM;
@@ -543,7 +512,6 @@ int af_alg_alloc_tsgl(struct sock *sk)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(af_alg_alloc_tsgl);
 
 /**
  * aead_count_tsgl - Count number of TX SG entries
@@ -558,17 +526,17 @@ EXPORT_SYMBOL_GPL(af_alg_alloc_tsgl);
  */
 unsigned int af_alg_count_tsgl(struct sock *sk, size_t bytes, size_t offset)
 {
-	struct alg_sock *ask = alg_sk(sk);
-	struct af_alg_ctx *ctx = ask->private;
-	struct af_alg_tsgl *sgl, *tmp;
+	const struct alg_sock *ask = alg_sk(sk);
+	const struct af_alg_ctx *ctx = ask->private;
+	const struct af_alg_tsgl *sgl;
 	unsigned int i;
 	unsigned int sgl_count = 0;
 
 	if (!bytes)
 		return 0;
 
-	list_for_each_entry_safe(sgl, tmp, &ctx->tsgl_list, list) {
-		struct scatterlist *sg = sgl->sg;
+	list_for_each_entry(sgl, &ctx->tsgl_list, list) {
+		const struct scatterlist *sg = sgl->sg;
 
 		for (i = 0; i < sgl->cur; i++) {
 			size_t bytes_count;
@@ -666,8 +634,7 @@ void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst,
 		}
 
 		list_del(&sgl->list);
-		sock_kfree_s(sk, sgl, sizeof(*sgl) + sizeof(sgl->sg[0]) *
-						     (MAX_SGL_ENTS + 1));
+		sock_kfree_s(sk, sgl, struct_size(sgl, sg, MAX_SGL_ENTS + 1));
 	}
 
 	if (!ctx->used)
@@ -680,7 +647,7 @@ EXPORT_SYMBOL_GPL(af_alg_pull_tsgl);
  *
  * @areq Request holding the TX and RX SGL
  */
-void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
+static void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
 {
 	struct sock *sk = areq->sk;
 	struct alg_sock *ask = alg_sk(sk);
@@ -691,7 +658,7 @@ void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
 	unsigned int i;
 
 	list_for_each_entry_safe(rsgl, tmp, &areq->rsgl_list, list) {
-		ctx->rcvused -= rsgl->sg_num_bytes;
+		atomic_sub(rsgl->sg_num_bytes, &ctx->rcvused);
 		af_alg_free_sg(&rsgl->sgl);
 		list_del(&rsgl->list);
 		if (rsgl != &areq->first_rsgl)
@@ -699,16 +666,16 @@ void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
 	}
 
 	tsgl = areq->tsgl;
-	for_each_sg(tsgl, sg, areq->tsgl_entries, i) {
-		if (!sg_page(sg))
-			continue;
-		put_page(sg_page(sg));
-	}
+	if (tsgl) {
+		for_each_sg(tsgl, sg, areq->tsgl_entries, i) {
+			if (!sg_page(sg))
+				continue;
+			put_page(sg_page(sg));
+		}
 
-	if (areq->tsgl && areq->tsgl_entries)
 		sock_kfree_s(sk, tsgl, areq->tsgl_entries * sizeof(*tsgl));
+	}
 }
-EXPORT_SYMBOL_GPL(af_alg_free_areq_sgls);
 
 /**
  * af_alg_wait_for_wmem - wait for availability of writable memory
@@ -717,7 +684,7 @@ EXPORT_SYMBOL_GPL(af_alg_free_areq_sgls);
  * @flags If MSG_DONTWAIT is set, then only report if function would sleep
  * @return 0 when writable memory is available, < 0 upon error
  */
-int af_alg_wait_for_wmem(struct sock *sk, unsigned int flags)
+static int af_alg_wait_for_wmem(struct sock *sk, unsigned int flags)
 {
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	int err = -ERESTARTSYS;
@@ -742,7 +709,6 @@ int af_alg_wait_for_wmem(struct sock *sk, unsigned int flags)
 
 	return err;
 }
-EXPORT_SYMBOL_GPL(af_alg_wait_for_wmem);
 
 /**
  * af_alg_wmem_wakeup - wakeup caller when writable memory is available
@@ -759,9 +725,9 @@ void af_alg_wmem_wakeup(struct sock *sk)
 	rcu_read_lock();
 	wq = rcu_dereference(sk->sk_wq);
 	if (skwq_has_sleeper(wq))
-		wake_up_interruptible_sync_poll(&wq->wait, POLLIN |
-							   POLLRDNORM |
-							   POLLRDBAND);
+		wake_up_interruptible_sync_poll(&wq->wait, EPOLLIN |
+							   EPOLLRDNORM |
+							   EPOLLRDBAND);
 	sk_wake_async(sk, SOCK_WAKE_WAITD, POLL_IN);
 	rcu_read_unlock();
 }
@@ -811,8 +777,7 @@ EXPORT_SYMBOL_GPL(af_alg_wait_for_data);
  *
  * @sk socket of connection to user space
  */
-
-void af_alg_data_wakeup(struct sock *sk)
+static void af_alg_data_wakeup(struct sock *sk)
 {
 	struct alg_sock *ask = alg_sk(sk);
 	struct af_alg_ctx *ctx = ask->private;
@@ -824,13 +789,12 @@ void af_alg_data_wakeup(struct sock *sk)
 	rcu_read_lock();
 	wq = rcu_dereference(sk->sk_wq);
 	if (skwq_has_sleeper(wq))
-		wake_up_interruptible_sync_poll(&wq->wait, POLLOUT |
-							   POLLRDNORM |
-							   POLLRDBAND);
+		wake_up_interruptible_sync_poll(&wq->wait, EPOLLOUT |
+							   EPOLLRDNORM |
+							   EPOLLRDBAND);
 	sk_wake_async(sk, SOCK_WAKE_SPACE, POLL_OUT);
 	rcu_read_unlock();
 }
-EXPORT_SYMBOL_GPL(af_alg_data_wakeup);
 
 /**
  * af_alg_sendmsg - implementation of sendmsg system call handler
@@ -857,8 +821,8 @@ int af_alg_sendmsg(struct socket *sock, struct msghdr *msg, size_t size,
 	struct af_alg_tsgl *sgl;
 	struct af_alg_control con = {};
 	long copied = 0;
-	bool enc = 0;
-	bool init = 0;
+	bool enc = false;
+	bool init = false;
 	int err = 0;
 
 	if (msg->msg_controllen) {
@@ -866,13 +830,13 @@ int af_alg_sendmsg(struct socket *sock, struct msghdr *msg, size_t size,
 		if (err)
 			return err;
 
-		init = 1;
+		init = true;
 		switch (con.op) {
 		case ALG_OP_ENCRYPT:
-			enc = 1;
+			enc = true;
 			break;
 		case ALG_OP_DECRYPT:
-			enc = 0;
+			enc = false;
 			break;
 		default:
 			return -EINVAL;
@@ -1048,6 +1012,18 @@ unlock:
 EXPORT_SYMBOL_GPL(af_alg_sendpage);
 
 /**
+ * af_alg_free_resources - release resources required for crypto request
+ */
+void af_alg_free_resources(struct af_alg_async_req *areq)
+{
+	struct sock *sk = areq->sk;
+
+	af_alg_free_areq_sgls(areq);
+	sock_kfree_s(sk, areq, areq->areqlen);
+}
+EXPORT_SYMBOL_GPL(af_alg_free_resources);
+
+/**
  * af_alg_async_cb - AIO callback handler
  *
  * This handler cleans up the struct af_alg_async_req upon completion of the
@@ -1063,40 +1039,35 @@ void af_alg_async_cb(struct crypto_async_request *_req, int err)
 	struct kiocb *iocb = areq->iocb;
 	unsigned int resultlen;
 
-	lock_sock(sk);
-
 	/* Buffer size written by crypto operation. */
 	resultlen = areq->outlen;
 
-	af_alg_free_areq_sgls(areq);
-	sock_kfree_s(sk, areq, areq->areqlen);
-	__sock_put(sk);
+	af_alg_free_resources(areq);
+	sock_put(sk);
 
-	iocb->ki_complete(iocb, err ? err : resultlen, 0);
-
-	release_sock(sk);
+	iocb->ki_complete(iocb, err ? err : (int)resultlen, 0);
 }
 EXPORT_SYMBOL_GPL(af_alg_async_cb);
 
 /**
  * af_alg_poll - poll system call handler
  */
-unsigned int af_alg_poll(struct file *file, struct socket *sock,
+__poll_t af_alg_poll(struct file *file, struct socket *sock,
 			 poll_table *wait)
 {
 	struct sock *sk = sock->sk;
 	struct alg_sock *ask = alg_sk(sk);
 	struct af_alg_ctx *ctx = ask->private;
-	unsigned int mask;
+	__poll_t mask;
 
-	sock_poll_wait(file, sk_sleep(sk), wait);
+	sock_poll_wait(file, sock, wait);
 	mask = 0;
 
 	if (!ctx->more || ctx->used)
-		mask |= POLLIN | POLLRDNORM;
+		mask |= EPOLLIN | EPOLLRDNORM;
 
 	if (af_alg_writable(sk))
-		mask |= POLLOUT | POLLWRNORM | POLLWRBAND;
+		mask |= EPOLLOUT | EPOLLWRNORM | EPOLLWRBAND;
 
 	return mask;
 }
@@ -1157,12 +1128,6 @@ int af_alg_get_rsgl(struct sock *sk, struct msghdr *msg, int flags,
 		if (!af_alg_readable(sk))
 			break;
 
-		if (!ctx->used) {
-			err = af_alg_wait_for_data(sk, flags);
-			if (err)
-				return err;
-		}
-
 		seglen = min_t(size_t, (maxsize - len),
 			       msg_data_left(msg));
 
@@ -1179,8 +1144,10 @@ int af_alg_get_rsgl(struct sock *sk, struct msghdr *msg, int flags,
 
 		/* make one iovec available as scatterlist */
 		err = af_alg_make_sg(&rsgl->sgl, &msg->msg_iter, seglen);
-		if (err < 0)
+		if (err < 0) {
+			rsgl->sg_num_bytes = 0;
 			return err;
+		}
 
 		/* chain the new scatterlist with previous one */
 		if (areq->last_rsgl)
@@ -1188,7 +1155,7 @@ int af_alg_get_rsgl(struct sock *sk, struct msghdr *msg, int flags,
 
 		areq->last_rsgl = rsgl;
 		len += err;
-		ctx->rcvused += err;
+		atomic_add(err, &ctx->rcvused);
 		rsgl->sg_num_bytes = err;
 		iov_iter_advance(&msg->msg_iter, err);
 	}

@@ -1,9 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2011 Marvell International Ltd. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -1551,7 +1548,7 @@ static void mv_u3d_handle_setup_packet(struct mv_u3d *u3d, u8 ep_num,
 		delegate = true;
 
 	/* delegate USB standard requests to the gadget driver */
-	if (delegate == true) {
+	if (delegate) {
 		/* USB requests handled by gadget */
 		if (setup->wLength) {
 			/* DATA phase from gadget, STATUS phase from u3d */

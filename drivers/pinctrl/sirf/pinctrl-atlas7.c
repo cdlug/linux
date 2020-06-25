@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * pinctrl pads, groups, functions for CSR SiRFatlasVII
  *
  * Copyright (c) 2011 - 2014 Cambridge Silicon Radio Limited, a CSR plc group
  * company.
- *
- * Licensed under GPLv2 or later.
  */
 
 #include <linux/init.h>
@@ -19,14 +18,13 @@
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
 #include <linux/of_irq.h>
-#include <linux/of_gpio.h>
 #include <linux/pinctrl/machine.h>
 #include <linux/pinctrl/pinconf.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/pinctrl/pinconf-generic.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 
 /* Definition of Pad&Mux Properties */
 #define N 0
@@ -354,7 +352,7 @@ struct atlas7_gpio_chip {
 	int nbank;
 	raw_spinlock_t lock;
 	struct gpio_chip chip;
-	struct atlas7_gpio_bank banks[0];
+	struct atlas7_gpio_bank banks[];
 };
 
 /**
@@ -5540,14 +5538,10 @@ static int atlas7_pinmux_resume_noirq(struct device *dev)
 {
 	struct atlas7_pmx *pmx = dev_get_drvdata(dev);
 	struct atlas7_pad_status *status;
-	struct atlas7_pad_config *conf;
 	int idx;
-	u32 bank;
 
 	for (idx = 0; idx < pmx->pctl_desc.npins; idx++) {
 		/* Get this Pad's descriptor from PINCTRL */
-		conf = &pmx->pctl_data->confs[idx];
-		bank = atlas7_pin_to_bank(idx);
 		status = &pmx->sleep_data[idx];
 
 		/* Restore Function selector */
@@ -5820,7 +5814,7 @@ static void atlas7_gpio_handle_irq(struct irq_desc *desc)
 				__func__, gc->label,
 				bank->gpio_offset + pin_in_bank);
 			generic_handle_irq(
-				irq_find_mapping(gc->irqdomain,
+				irq_find_mapping(gc->irq.domain,
 					bank->gpio_offset + pin_in_bank));
 		}
 
@@ -5860,7 +5854,7 @@ static int atlas7_gpio_request(struct gpio_chip *chip,
 	if (ret < 0)
 		return ret;
 
-	if (pinctrl_request_gpio(chip->base + gpio))
+	if (pinctrl_gpio_request(chip->base + gpio))
 		return -ENODEV;
 
 	raw_spin_lock_irqsave(&a7gc->lock, flags);
@@ -5890,7 +5884,7 @@ static void atlas7_gpio_free(struct gpio_chip *chip,
 
 	raw_spin_unlock_irqrestore(&a7gc->lock, flags);
 
-	pinctrl_free_gpio(chip->base + gpio);
+	pinctrl_gpio_free(chip->base + gpio);
 }
 
 static int atlas7_gpio_direction_input(struct gpio_chip *chip,
@@ -6002,6 +5996,7 @@ static int atlas7_gpio_probe(struct platform_device *pdev)
 	struct gpio_chip *chip;
 	u32 nbank;
 	int ret, idx;
+	struct gpio_irq_chip *girq;
 
 	ret = of_property_read_u32(np, "gpio-banks", &nbank);
 	if (ret) {
@@ -6012,8 +6007,8 @@ static int atlas7_gpio_probe(struct platform_device *pdev)
 	}
 
 	/* retrieve gpio descriptor data */
-	a7gc = devm_kzalloc(&pdev->dev, sizeof(*a7gc) +
-			sizeof(struct atlas7_gpio_bank) * nbank, GFP_KERNEL);
+	a7gc = devm_kzalloc(&pdev->dev, struct_size(a7gc, banks, nbank),
+			    GFP_KERNEL);
 	if (!a7gc)
 		return -ENOMEM;
 
@@ -6054,24 +6049,15 @@ static int atlas7_gpio_probe(struct platform_device *pdev)
 	chip->of_gpio_n_cells = 2;
 	chip->parent = &pdev->dev;
 
-	/* Add gpio chip to system */
-	ret = gpiochip_add_data(chip, a7gc);
-	if (ret) {
-		dev_err(&pdev->dev,
-			"%s: error in probe function with status %d\n",
-			np->name, ret);
-		goto failed;
-	}
-
-	/* Add gpio chip to irq subsystem */
-	ret =  gpiochip_irqchip_add(chip, &atlas7_gpio_irq_chip,
-			0, handle_level_irq, IRQ_TYPE_NONE);
-	if (ret) {
-		dev_err(&pdev->dev,
-			"could not connect irqchip to gpiochip\n");
-		goto failed;
-	}
-
+	girq = &chip->irq;
+	girq->chip = &atlas7_gpio_irq_chip;
+	girq->parent_handler = atlas7_gpio_handle_irq;
+	girq->num_parents = nbank;
+	girq->parents = devm_kcalloc(&pdev->dev, nbank,
+				     sizeof(*girq->parents),
+				     GFP_KERNEL);
+	if (!girq->parents)
+		return -ENOMEM;
 	for (idx = 0; idx < nbank; idx++) {
 		struct atlas7_gpio_bank *bank;
 
@@ -6090,9 +6076,18 @@ static int atlas7_gpio_probe(struct platform_device *pdev)
 			goto failed;
 		}
 		bank->irq = ret;
+		girq->parents[idx] = ret;
+	}
+	girq->default_type = IRQ_TYPE_NONE;
+	girq->handler = handle_level_irq;
 
-		gpiochip_set_chained_irqchip(chip, &atlas7_gpio_irq_chip,
-					bank->irq, atlas7_gpio_handle_irq);
+	/* Add gpio chip to system */
+	ret = gpiochip_add_data(chip, a7gc);
+	if (ret) {
+		dev_err(&pdev->dev,
+			"%pOF: error in probe function with status %d\n",
+			np, ret);
+		goto failed;
 	}
 
 	platform_set_drvdata(pdev, a7gc);

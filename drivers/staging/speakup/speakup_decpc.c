@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * This is the DECtalk PC speakup driver
  *
@@ -14,16 +15,6 @@
  *      Copyright (c) 2003 David Borowski <david575@golden.net>
  *
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 #include <linux/jiffies.h>
 #include <linux/sched.h>
@@ -148,6 +139,7 @@ static struct var_t vars[] = {
 	{ CAPS_STOP, .u.s = {"[:dv ap 100]" } },
 	{ RATE, .u.n = {"[:ra %d]", 9, 0, 18, 150, 25, NULL } },
 	{ PITCH, .u.n = {"[:dv ap %d]", 80, 0, 100, 20, 0, NULL } },
+	{ INFLECTION, .u.n = {"[:dv pr %d] ", 100, 0, 10000, 0, 0, NULL } },
 	{ VOL, .u.n = {"[:vo se %d]", 5, 0, 9, 5, 10, NULL } },
 	{ PUNCT, .u.n = {"[:pu %c]", 0, 0, 2, 0, 0, "nsa" } },
 	{ VOICE, .u.n = {"[:n%c]", 0, 0, 9, 0, 0, "phfdburwkv" } },
@@ -164,6 +156,8 @@ static struct kobj_attribute caps_stop_attribute =
 	__ATTR(caps_stop, 0644, spk_var_show, spk_var_store);
 static struct kobj_attribute pitch_attribute =
 	__ATTR(pitch, 0644, spk_var_show, spk_var_store);
+static struct kobj_attribute inflection_attribute =
+	__ATTR(inflection, 0644, spk_var_show, spk_var_store);
 static struct kobj_attribute punct_attribute =
 	__ATTR(punct, 0644, spk_var_show, spk_var_store);
 static struct kobj_attribute rate_attribute =
@@ -192,6 +186,7 @@ static struct attribute *synth_attrs[] = {
 	&caps_start_attribute.attr,
 	&caps_stop_attribute.attr,
 	&pitch_attribute.attr,
+	&inflection_attribute.attr,
 	&punct_attribute.attr,
 	&rate_attribute.attr,
 	&voice_attribute.attr,
@@ -272,7 +267,7 @@ static int dt_wait_dma(void)
 	if (!dt_waitbit(STAT_dma_ready))
 		return 0;
 	while (--timeout > 0) {
-		if ((dt_getstatus()&STAT_dma_state) == state)
+		if ((dt_getstatus() & STAT_dma_state) == state)
 			return 1;
 		udelay(50);
 	}
@@ -311,12 +306,12 @@ static void synth_flush(struct spk_synth *synth)
 	while (dt_ctrl(CTRL_flush)) {
 		if (--timeout == 0)
 			break;
-udelay(50);
+		udelay(50);
 	}
 	for (timeout = 0; timeout < 10; timeout++) {
 		if (dt_waitbit(STAT_dma_ready))
 			break;
-udelay(50);
+		udelay(50);
 	}
 	outb_p(DMA_sync, speakup_info.port_tts + 4);
 	outb_p(0, speakup_info.port_tts + 4);
@@ -324,7 +319,7 @@ udelay(50);
 	for (timeout = 0; timeout < 10; timeout++) {
 		if (!(dt_getstatus() & STAT_flushing))
 			break;
-udelay(50);
+		udelay(50);
 	}
 	dma_state = dt_getstatus() & STAT_dma_state;
 	dma_state ^= STAT_dma_state;
@@ -358,7 +353,7 @@ static int testkernel(void)
 		return 0;
 	else if (dt_stat == 0x0dec)
 		pr_warn("dec_pc at 0x%x, software not loaded\n",
-				speakup_info.port_tts);
+			speakup_info.port_tts);
 	status = -3;
 oops:	synth_release_region(speakup_info.port_tts, SYNTH_IO_EXTENT);
 	speakup_info.port_tts = 0;
@@ -421,11 +416,11 @@ static void do_catch_up(struct spk_synth *synth)
 				if (!in_escape)
 					dt_sendchar(PROCSPEECH);
 				spin_lock_irqsave(&speakup_info.spinlock,
-							flags);
+						  flags);
 				jiffy_delta_val = jiffy_delta->u.n.value;
 				delay_time_val = delay_time->u.n.value;
 				spin_unlock_irqrestore(&speakup_info.spinlock,
-							flags);
+						       flags);
 				schedule_timeout(msecs_to_jiffies
 						 (delay_time_val));
 				jiff_max = jiffies + jiffy_delta_val;
